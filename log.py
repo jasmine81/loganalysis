@@ -1,78 +1,110 @@
-#!/usr/bin/env python3
-
+#!/usr/bin/env python
 import psycopg2
 
-# Database queries
-# Database query 1: What are the three most popular articles of all time?
-request_articles = """select articles.title, count(*) as num
-                from log, articles
-                where log.status='200 OK'
-                and articles.slug = substr(log.path, 10)
-                group by articles.title
-                order by num desc
-                limit 3;"""
-
-# Database query 2: Who are the most popular article authors of all time?
-request_authors = """select authors.name, count(*) as num
-                from articles, authors, log
-                where log.status='200 OK'
-                and authors.id = articles.author
-                and articles.slug = substr(log.path, 10)
-                group by authors.name
-                order by num desc;
-                """
-
-# Database query 3: On which day did more than 1% of requests lead to errors?
-request_errors = """select time, percentagefailed
-                from percentagecount
-                where percentagefailed > 1;
-                """
+DBNAME = "news"
 
 
-# Query data from the database, open and close the connection
-def query_db(sql_request):
-        conn = psycopg2.connect(database="news")
-        cursor = conn.cursor()
-        cursor.execute(sql_request)
-        results = cursor.fetchall()
-        conn.close()
-        return results
+def run_query(query):
+    """Connects to the database, runs the query passed to it,
+    and returns the results"""
+    db = psycopg2.connect('dbname=' + DBNAME)
+    c = db.cursor()
+    c.execute(query)
+    rows = c.fetchall()
+    db.close()
+    return rows
 
 
-# Writing the report
-# Print a title of the report
-def print_title(title):
-    print ("\n\t\t" + title + "\n")
+def get_top_articles():
+    """Returns top 3 most read articles"""
+
+    # Build Query String
+    query = """
+        SELECT articles.title, COUNT(*) AS num
+        FROM articles
+        JOIN log
+        ON log.path LIKE concat('/article/%', articles.slug)
+        GROUP BY articles.title
+        ORDER BY num DESC
+        LIMIT 3;
+    """
+
+    # Run Query
+    results = run_query(query)
+
+    # Print Results
+    print('\n top three articles based on views')
+    count = 1
+    for i in results:
+        number = '(' + str(count) + ') "'
+        title = i[0]
+        views = '" with ' + str(i[1]) + " views"
+        print(number + title + views)
+        count += 1
 
 
-# Print the top three articles of all time
-def top_three_articles():
-    top_three_articles = query_db(request_articles)
-    print_title("Top 3 articles of all time")
+def get_top_article_authors():
+    """returns top 3 most popular authors"""
 
-    for title, num in top_three_articles:
-        print(" \"{}\" -- {} views".format(title, num))
+    # Build Query String
+    query = """
+        SELECT authors.name, COUNT(*) AS num
+        FROM authors
+        JOIN articles
+        ON authors.id = articles.author
+        JOIN log
+        ON log.path like concat('/article/%', articles.slug)
+        GROUP BY authors.name
+        ORDER BY num DESC
+        LIMIT 3;
+    """
+
+    # Run Query
+    results = run_query(query)
+
+    # Print Results
+    print('\n top three auhots based on views:')
+    count = 1
+    for i in results:
+        print('(' + str(count) + ') ' + i[0] + ' with ' + str(i[1]) + " views")
+        count += 1
 
 
-# Print the top authors of all time
-    def top_three_authors():
-        top_three_authors = query_db(request_authors)
-        print_title("Top authors of all time")
+def get_days_with_errors():
+    """returns days with more than 1% errors"""
 
-    for name, num in top_three_authors:
-        print(" {} -- {} views".format(name, num))
+    # Build Query String
+    query = """
+        SELECT total.day,
+          ROUND(((errors.error_requests*1.0) / total.requests), 3) AS percent
+        FROM (
+          SELECT date_trunc('day', time) "day", count(*) AS error_requests
+          FROM log
+          WHERE status LIKE '404%'
+          GROUP BY day
+        ) AS errors
+        JOIN (
+          SELECT date_trunc('day', time) "day", count(*) AS requests
+          FROM log
+          GROUP BY day
+          ) AS total
+        ON total.day = errors.day
+        WHERE (ROUND(((errors.error_requests*1.0) / total.requests), 3) > 0.01)
+        ORDER BY percent DESC;
+    """
+
+    # Run Query
+    results = run_query(query)
+
+    # Print Results
+    print('\n days with maore than 1% error:')
+    for i in results:
+        date = i[0].strftime('%B %d, %Y')
+        errors = str(round(i[1]*100, 1)) + "%" + " errors"
+        print(date + " -- " + errors)
 
 
-# Print the days in which there were more than 1% bad requests
-def high_error_days():
-    high_error_days = query_db(request_errors)
-    print_title("Days with more than one percentage of bad requests")
-
-    for day, percentagefailed in high_error_days:
-        print("""{0:%B %d, %Y}
-            -- {1:.2f} % errors""".format(day, percentagefailed))
-
-if __name__ == '__main__':
-    top_three_articles()
-    top_three_authors()
-    high_error_days()
+print('results...\n')
+get_top_articles()
+get_top_article_authors()
+get_days_with_errors()
